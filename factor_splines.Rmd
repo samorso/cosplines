@@ -1,0 +1,224 @@
+---
+title: "Factor splines"
+author: "Samuel Orso"
+date: "`r Sys.Date()`"
+output: 
+ prettydoc::html_pretty:
+  theme: architect
+  highlight: github
+  toc: true
+  df_print: kable
+  fig_width: 7
+  fig_height: 5
+---
+
+## General formualtion of the problem
+Let the $d$-dimensional random variable $(X_i)_{i=1}^d$ be expressed as a non-linear
+factor model through its cumulative distribution function:$$ F_i(X_i) = h(U,V_i),\quad i =1,\dots,d, $$
+where $U\sim\mathcal{U}(0,1)$ and $V_i\sim\mathcal{U}(0,1)$ are independent The unknown function
+$h(\cdot)$ is believed to be well approximated by the tensor product spline 
+$$ \hat{h}(U,V_i) \equiv s(U,V_i) = \mathbf{B}(U)^T\mathbf{C}\mathbf{B}(V_i), $$ where $\mathbf{B}(x)$ is 
+the spline basis for $x$ and $\mathbf{C}$ is a matrix of coefficients. Since
+$U$ and $V_i$ are not observed, we propose to estimate the unknown function via
+the simulated method of moments: $$ \widehat{\mathbf{C}} = \arg\min_{\mathbf{C}}\lVert\widehat{\mathbf{m}}-\widetilde{\mathbf{m}}(\mathbf{C})\rVert^2_{\Omega}, $$
+where $\mathbf{m}$ is a $K$-vector of moments estimated on $\{F_i(X_i)\}_{i=1}^d$ and $\Omega$
+is a suitable positive semi-definite matrix of weights. At the end of the procedure,
+we obtain an estimate of $s(\cdot)$, $$\hat{s}(U,V_i) = \mathbf{B}(U)^T\widehat{\mathbf{C}}\mathbf{B}(V_i)$$
+Note that $\widehat{\mathbf{m}}$ is estimated on the observations where $\widetilde{\mathbf{m}}$
+is estimated on pseudo-observations generated from $\hat{s}$. In words,
+we try to obtain the best fit to the approximation $s(\cdot)$ of the unknown function $h(\cdot)$.
+
+## Problem at hand
+In this example we assume that the true function $h(\cdot)$ is parametric, it is the clayton generator:
+$$h(U,V_i) = \left(1+\frac{-\log(V_i)}{F_{\alpha}^{-1}(U)}\right)^{-\alpha}, \alpha>0,$$
+where $F_{\alpha}(x)$ is the cdf of a gamma distribution with parameter $(\alpha,1)$.
+
+## Loading packages and functions
+
+```{r,echo=FALSE}
+rm(list=ls())
+setwd("~/Github/samorso/cosplines/")
+load(file="opt_bspline.rda")
+load(file="opt_bspline1.rda")
+load(file="opt_ispline.rda")
+load(file="opt_ispline1.rda")
+load(file="opt_ispline2.rda")
+load(file="opt_ispline3.rda")
+```
+
+
+```{r,message=FALSE,cache=FALSE}
+require(splines2)
+require(cosplines)
+require(nnls)
+```
+
+## Setup
+```{r}
+n <- 1e3 # sample size for one dimension
+d <- 3 # number of dimensions
+alpha <- 2.5
+set.seed(123L)
+z <- runif(n) # latent factor
+eps <- matrix(runif(n*d),nc=d) # latent error
+x <- clayton(z,eps,alpha) # observations
+kn <- c(.03,.2,.5,.8,.97) # knots
+df <- 3 # degrees of the B-splines
+q <- seq.int(.02,.98,.01) # theoritical quantiles for empirical moments
+m_hat <- average_moments(x,q) # empirical moments (first is Spearmann, other are quantile dependences)
+B <- 5 # number of bootstrap replicates
+```
+
+## B-spline basis
+We first try with the B-spline basis.
+
+```{r}
+# Best approximation achievable given knots and degrees
+xx <- yy <- seq.int(.01,.99,.001)
+exp_grid <- expand.grid(xx,yy) 
+zz_cl <- matrix(clayton(exp_grid[,1],as.matrix(exp_grid),alpha)[,2],nc=length(xx))
+A <- bSpline(xx,knots=kn,degree=df,intercept=F,Boundary.knots=c(0,1))
+D <- qr.solve(crossprod(A)) %*% t(A)
+coefs_hat <- apply(zz_cl,MARGIN=2,FUN=function(x,M)M%*%x,M=D)
+coefs_hat_best <- apply(t(coefs_hat),MARGIN=2,FUN=function(x,M)M%*%x,M=D)
+
+# Estimation
+# Use the independent copula as starting points
+zz <- outer(xx,yy)
+coefs_hat <- apply(zz,MARGIN=2,FUN=function(x,M)M%*%x,M=D)
+coefs_hat2 <- apply(t(coefs_hat),MARGIN=2,FUN=function(x,M)M%*%x,M=D)
+sv <- c(coefs_hat2) # starting values
+```
+
+```{r,eval=FALSE}
+opt <- optim(par=c(sv),fn=of_smm,method="Nelder-Mead",M=A,n=n,d=d,q=q,
+             m_hat=m_hat,B=B,control=list(trace=1,maxit=200*length(sv)))
+opt1 <- optim(par=c(coefs_hat_best),fn=of_smm,method="Nelder-Mead",M=A,n=n,d=d,q=q,
+              m_hat=m_hat,B=B,control=list(trace=1,maxit=200*length(sv)))
+```
+
+```{r}
+C_hat <- matrix(opt$par,nc=ncol(A))
+C_hat1 <- matrix(opt1$par,nc=ncol(A))
+
+# Objective function at starting values and optimums
+of_smm(sv,A,n,d,q,m_hat,B)
+of_smm(c(coefs_hat_best),A,n,d,q,m_hat,B)
+of_smm(c(C_hat),A,n,d,q,m_hat,B)
+of_smm(c(C_hat1),A,n,d,q,m_hat,B)
+```
+
+```{r}
+# Visualization
+xx <- yy <- seq.int(.01,.99,.03)
+exp_grid <- expand.grid(xx,yy) 
+zz_cl <- matrix(clayton(exp_grid[,1],as.matrix(exp_grid),alpha)[,2],nc=length(xx))
+P <- predict(A,xx)
+zz_best <- tcrossprod(P%*%coefs_hat_best,P)
+zz_hat <- tcrossprod(P%*%C_hat,P)
+zz_hat1 <- tcrossprod(P%*%C_hat1,P)
+par(mfrow=c(1,2))
+persp(xx,yy,zz_cl,theta=-60,phi=30,expand=.6,ticktype='detailed',main="True function")
+persp(xx,yy,t(zz_best),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Best approximation")
+persp(xx,yy,t(zz_hat),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (independent copula)")
+persp(xx,yy,t(zz_hat1),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (best)")
+```
+
+```{r}
+# Max relative error
+norm(t(zz_best)-zz_cl,"I")/norm(t(zz_best),"I")
+norm(t(zz_hat)-zz_cl,"I")/norm(t(zz_hat),"I")
+norm(t(zz_hat1)-zz_cl,"I")/norm(t(zz_hat1),"I")
+```
+
+## I-spline basis
+
+```{r}
+# Best approximation achievable given knots and degrees
+xx <- yy <- seq.int(.01,.99,.001)
+exp_grid <- expand.grid(xx,yy) 
+zz <- matrix(clayton(exp_grid[,1],as.matrix(exp_grid),alpha)[,2],nc=length(xx))
+A <- iSpline(xx,knots=kn,degree=df,intercept=F,Boundary.knots=c(0,1))
+D <- qr.solve(crossprod(A)) %*% t(A)
+coefs_hat <- apply(zz,MARGIN=2,FUN=function(x,M)M%*%x,M=D)
+coefs_hat_best <- apply(t(coefs_hat),MARGIN=2,FUN=function(x,M)M%*%x,M=D)
+coefs_hat_best_p <- apply(t(coefs_hat),MARGIN=2,FUN=function(x,M)nnls(M,x)$x,M=A) # non-negative ls
+
+# Estimation
+# Use the independent copula as starting points
+zz <- outer(xx,yy)
+coefs_hat <- apply(zz,MARGIN=2,FUN=function(x,M)M%*%x,M=D)
+coefs_hat2 <- apply(t(coefs_hat),MARGIN=2,FUN=function(x,M)M%*%x,M=D)
+sv <- c(coefs_hat2) # starting values
+```
+
+```{r,eval=FALSE}
+# Optimization
+opt2 <- optim(par=c(sv),fn=of_smm,method="Nelder-Mead",M=A,n=n,d=d,q=q,
+              m_hat=m_hat,B=B,control=list(trace=1,maxit=200*length(sv)))
+# Optimization using best estimates as starting values
+opt3 <- optim(par=c(coefs_hat_best),fn=of_smm,method="Nelder-Mead",M=A,n=n,d=d,q=q,
+              m_hat=m_hat,B=B,control=list(trace=1,maxit=200*length(sv)))
+# Optimization using best estimates as starting values under non-negative constrains
+coefs_hat_best_p[coefs_hat_best_p<=0] <- 1e-3
+opt4 <- optim(par=log(c(coefs_hat_best_p)),fn=of_smm2,method="Nelder-Mead",M=A,n=n,d=d,q=q,
+              m_hat=m_hat,B=B,control=list(trace=1,maxit=200*length(sv)))
+# Optimization using best estimates as starting values under non-negative constrains
+coefs_hat_best_p[coefs_hat_best_p>=1] <- 1-1e-3
+opt5 <- optim(par=boot::logit(c(coefs_hat_best_p)),fn=of_smm3,method="Nelder-Mead",M=A,n=n,d=d,q=q,
+              m_hat=m_hat,B=B,control=list(trace=1,maxit=200*length(sv)))
+```
+
+```{r}
+C_hat <- matrix(opt2$par,nc=ncol(A))
+C_hat1 <- matrix(opt3$par,nc=ncol(A))
+C_hat2 <- matrix(exp(opt4$par),nc=ncol(A))
+C_hat3 <- matrix(boot::inv.logit(opt5$par),nc=ncol(A))
+
+# Objective function at starting values and optimums
+of_smm(sv,A,n,d,q,m_hat,B)
+of_smm(c(coefs_hat_best),A,n,d,q,m_hat,B)
+of_smm(c(C_hat),A,n,d,q,m_hat,B)
+of_smm(c(C_hat1),A,n,d,q,m_hat,B)
+of_smm(c(C_hat2),A,n,d,q,m_hat,B)
+of_smm(c(C_hat3),A,n,d,q,m_hat,B)
+```
+
+```{r,fig.align='center',fig.height=12,fig.width=6,cache=T}
+# Visulaization
+xx <- yy <- seq.int(.01,.99,.03)
+exp_grid <- expand.grid(xx,yy) 
+zz_cl <- matrix(clayton(exp_grid[,1],as.matrix(exp_grid),alpha)[,2],nc=length(xx))
+P <- predict(A,xx)
+zz_best <- tcrossprod(P%*%coefs_hat_best_p,P)
+zz_hat <- tcrossprod(P%*%C_hat,P)
+zz_hat1 <- tcrossprod(P%*%C_hat1,P)
+zz_hat2 <- tcrossprod(P%*%C_hat2,P)
+zz_hat3 <- tcrossprod(P%*%C_hat3,P)
+par(mfrow=c(3,2))
+persp(xx,yy,zz_cl,theta=-60,phi=30,expand=.6,ticktype='detailed',main="True function")
+persp(xx,yy,t(zz_best),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Best approximation")
+persp(xx,yy,t(zz_hat),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (independent copula)")
+persp(xx,yy,t(zz_hat1),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (best)")
+persp(xx,yy,t(zz_hat2),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (best) positive constr")
+persp(xx,yy,t(zz_hat3),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (best) (0,1) constr")
+```
+
+```{r}
+# Max relative error
+norm(t(zz_best)-zz_cl,"I")/norm(t(zz_best),"I")
+norm(t(zz_hat)-zz_cl,"I")/norm(t(zz_hat),"I")
+norm(t(zz_hat1)-zz_cl,"I")/norm(t(zz_hat1),"I")
+norm(t(zz_hat2)-zz_cl,"I")/norm(t(zz_hat2),"I")
+norm(t(zz_hat3)-zz_cl,"I")/norm(t(zz_hat3),"I")
+```
+
+
+## Some remarks:
+- Here we propose to use the independent copula to obtain starting values for $\mathbf{C}$ 
+since $U$ and $(V_i)_{i=1}^d$ are not observed. Maybe a different strategy can be 
+more optimal (closer to the ``ideal'' starting values).  
+- All the results depend on the knot sequences and the selected degree for the splines,
+those choices are totally arbitrary up to now.  
+
+
