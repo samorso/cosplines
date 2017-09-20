@@ -33,7 +33,7 @@ In this example we assume that the true function $h(\cdot)$ is parametric, it is
 $$h(U,V_i) = \left(1+\frac{-\log(V_i)}{F_{\alpha}^{-1}(U)}\right)^{-\alpha}, \alpha>0,$$
 where $F_{\alpha}(x)$ is the cdf of a gamma distribution with parameter $(\alpha,1)$.
 
-## Loading packages and functions
+## Loading packages
 
 ```{r,echo=FALSE}
 rm(list=ls())
@@ -51,6 +51,7 @@ load(file="opt_ispline3.rda")
 require(splines2)
 require(cosplines)
 require(nnls)
+require(plotly)
 ```
 
 ## Setup
@@ -70,7 +71,7 @@ B <- 5 # number of bootstrap replicates
 ```
 
 ## B-spline basis
-We first try with the B-spline basis.
+We first try the B-spline basis approach.
 
 ```{r}
 # Best approximation achievable given knots and degrees
@@ -90,6 +91,8 @@ coefs_hat2 <- apply(t(coefs_hat),MARGIN=2,FUN=function(x,M)M%*%x,M=D)
 sv <- c(coefs_hat2) # starting values
 ```
 
+We try two different starting values for the optimization: `sv` stands for starting values, it based on a independent copula, `coefs_hat_best` is the spline least squares estimator that uses $Z$ and $\epsilon$ directly as if they were observed. It represents the worse/best scenario cases.
+
 ```{r,eval=FALSE}
 opt <- optim(par=c(sv),fn=of_smm,method="Nelder-Mead",M=A,n=n,d=d,q=q,
              m_hat=m_hat,B=B,control=list(trace=1,maxit=200*length(sv)))
@@ -97,16 +100,25 @@ opt1 <- optim(par=c(coefs_hat_best),fn=of_smm,method="Nelder-Mead",M=A,n=n,d=d,q
               m_hat=m_hat,B=B,control=list(trace=1,maxit=200*length(sv)))
 ```
 
+Evaluate the value of the objective function (to minimize) at different estimates:
+
 ```{r}
 C_hat <- matrix(opt$par,nc=ncol(A))
 C_hat1 <- matrix(opt1$par,nc=ncol(A))
 
 # Objective function at starting values and optimums
-of_smm(sv,A,n,d,q,m_hat,B)
-of_smm(c(coefs_hat_best),A,n,d,q,m_hat,B)
-of_smm(c(C_hat),A,n,d,q,m_hat,B)
-of_smm(c(C_hat1),A,n,d,q,m_hat,B)
+d_f <- data.frame(
+  "Starting value independent" = of_smm(sv,A,n,d,q,m_hat,B),
+  "Estimator independent" = of_smm(c(C_hat),A,n,d,q,m_hat,B),
+  "Starting value best" = of_smm(c(coefs_hat_best),A,n,d,q,m_hat,B),
+  "Estimator best" = of_smm(c(C_hat1),A,n,d,q,m_hat,B)
+)
+d_f
 ```
+
+The _best_ starting values use directly the $Z$ and $\epsilon$ as if they were observed, and estimate the usual least squares in such situation. The estimator based on the _best_ starting values can be considered as the _oracle_. The _independent_ starting values is based on an independent copula, it does not use any information from $Z$ nor $\epsilon$ and therefore more realistic. 
+
+Let's illustrate the results.
 
 ```{r}
 # Visualization
@@ -117,21 +129,50 @@ P <- predict(A,xx)
 zz_best <- tcrossprod(P%*%coefs_hat_best,P)
 zz_hat <- tcrossprod(P%*%C_hat,P)
 zz_hat1 <- tcrossprod(P%*%C_hat1,P)
-par(mfrow=c(1,2))
-persp(xx,yy,zz_cl,theta=-60,phi=30,expand=.6,ticktype='detailed',main="True function")
-persp(xx,yy,t(zz_best),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Best approximation")
-persp(xx,yy,t(zz_hat),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (independent copula)")
-persp(xx,yy,t(zz_hat1),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (best)")
 ```
+
+The plot of the true function $h(\cdot)$.
+
+```{r}
+plot_ly(x = xx, y = yy, z = zz_cl) %>% add_surface()
+```
+
+
+The plot of $\hat{s}(\cdot)$ evaluated at the _oracle_ (best starting values):
+
+```{r}
+plot_ly(x = xx, y = yy, z = zz_best) %>% add_surface()
+```
+
+
+The plot of $\hat{s}(\cdot)$ evaluated at the _best estimate_ (using the best starting values):
+
+```{r}
+plot_ly(x = xx, y = yy, z = zz_hat1) %>% add_surface()
+```
+
+Eventually the plot of $\hat{s}(\cdot)$ evaluated at the estimate based on the independent copula as starting values
+
+
+```{r}
+plot_ly(x = xx, y = yy, z = zz_hat) %>% add_surface()
+```
+
+It is hard to spot the difference between the best on the graphs. Clearly the estimator based on the independent copula is far from the true function. We can measure the performance of the estimators by the following comparison $$ \frac{\lVert h - \hat{s} \rVert_{\infty}}{\lVert h\rVert_{\infty}} $$ 
 
 ```{r}
 # Max relative error
-norm(t(zz_best)-zz_cl,"I")/norm(t(zz_best),"I")
-norm(t(zz_hat)-zz_cl,"I")/norm(t(zz_hat),"I")
-norm(t(zz_hat1)-zz_cl,"I")/norm(t(zz_hat1),"I")
+d_f <- data.frame(
+  "Starting value best" = norm(t(zz_best)-zz_cl,"I")/norm(t(zz_best),"I"),
+  "Estimator independent" = norm(t(zz_hat)-zz_cl,"I")/norm(t(zz_hat),"I"),
+  "Estimator best" = norm(t(zz_hat1)-zz_cl,"I")/norm(t(zz_hat1),"I")
+)
+d_f
 ```
 
 ## I-spline basis
+
+I-splines have the advantage over B-splines to constrain monotonicity on the function of interest.
 
 ```{r}
 # Best approximation achievable given knots and degrees
@@ -152,6 +193,8 @@ coefs_hat2 <- apply(t(coefs_hat),MARGIN=2,FUN=function(x,M)M%*%x,M=D)
 sv <- c(coefs_hat2) # starting values
 ```
 
+We operate as with the B-splines. We add also two optimizations: first (see `opt4`) with a positive constraints on the coefficients, i.e. $C = (c)_{ij} > 0; \forall i,j$, second (see `opt5`) with a unit constraint for the coefficients, i.e. $C = (c)_{ij} \in[0,1]; \forall i,j$. Both additionnal optimizations use the _best_ starting values `coefs_hat_best`.
+
 ```{r,eval=FALSE}
 # Optimization
 opt2 <- optim(par=c(sv),fn=of_smm,method="Nelder-Mead",M=A,n=n,d=d,q=q,
@@ -169,6 +212,9 @@ opt5 <- optim(par=boot::logit(c(coefs_hat_best_p)),fn=of_smm3,method="Nelder-Mea
               m_hat=m_hat,B=B,control=list(trace=1,maxit=200*length(sv)))
 ```
 
+
+Evaluate the value of the objective function (to minimize) at different estimates:
+
 ```{r}
 C_hat <- matrix(opt2$par,nc=ncol(A))
 C_hat1 <- matrix(opt3$par,nc=ncol(A))
@@ -176,13 +222,18 @@ C_hat2 <- matrix(exp(opt4$par),nc=ncol(A))
 C_hat3 <- matrix(boot::inv.logit(opt5$par),nc=ncol(A))
 
 # Objective function at starting values and optimums
-of_smm(sv,A,n,d,q,m_hat,B)
-of_smm(c(coefs_hat_best),A,n,d,q,m_hat,B)
-of_smm(c(C_hat),A,n,d,q,m_hat,B)
-of_smm(c(C_hat1),A,n,d,q,m_hat,B)
-of_smm(c(C_hat2),A,n,d,q,m_hat,B)
-of_smm(c(C_hat3),A,n,d,q,m_hat,B)
+d_f <- data.frame(
+  "Starting value independent" = of_smm(sv,A,n,d,q,m_hat,B),
+  "Estimator independent" = of_smm(c(C_hat),A,n,d,q,m_hat,B),
+  "Starting value best" = of_smm(c(coefs_hat_best),A,n,d,q,m_hat,B),
+  "Estimator best" = of_smm(c(C_hat1),A,n,d,q,m_hat,B),
+  "Est best >0" = of_smm(c(C_hat2),A,n,d,q,m_hat,B),
+  "Est best [0,1]" = of_smm(c(C_hat3),A,n,d,q,m_hat,B)
+)
+d_f
 ```
+
+Let's illustrates the results:
 
 ```{r,fig.align='center',fig.height=12,fig.width=6,cache=T}
 # Visulaization
@@ -195,22 +246,53 @@ zz_hat <- tcrossprod(P%*%C_hat,P)
 zz_hat1 <- tcrossprod(P%*%C_hat1,P)
 zz_hat2 <- tcrossprod(P%*%C_hat2,P)
 zz_hat3 <- tcrossprod(P%*%C_hat3,P)
-par(mfrow=c(3,2))
-persp(xx,yy,zz_cl,theta=-60,phi=30,expand=.6,ticktype='detailed',main="True function")
-persp(xx,yy,t(zz_best),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Best approximation")
-persp(xx,yy,t(zz_hat),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (independent copula)")
-persp(xx,yy,t(zz_hat1),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (best)")
-persp(xx,yy,t(zz_hat2),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (best) positive constr")
-persp(xx,yy,t(zz_hat3),theta=-60,phi=30,expand=.6,ticktype='detailed',main="Estimation (best) (0,1) constr")
 ```
+
+
+Recall the plot of the true function $h(\cdot)$:
+
+```{r}
+plot_ly(x = xx, y = yy, z = zz_cl) %>% add_surface()
+```
+
+Plot of the estimate $\hat{s}(\cdot)$ based on the independent starting values:
+```{r}
+plot_ly(x = xx, y = yy, z = zz_hat) %>% add_surface()
+```
+
+Plot of  $\hat{s}(\cdot)$ based on the best starting values:
+```{r}
+plot_ly(x = xx, y = yy, z = zz_best) %>% add_surface()
+```
+
+Plot of the estimate $\hat{s}(\cdot)$ based on the best starting values:
+```{r}
+plot_ly(x = xx, y = yy, z = zz_hat1) %>% add_surface()
+```
+
+Plot of the estimate $\hat{s}(\cdot)$ based on the best starting values under the positivity constraint:
+```{r}
+plot_ly(x = xx, y = yy, z = zz_hat2) %>% add_surface()
+```
+
+Plot of the estimate $\hat{s}(\cdot)$ based on the best starting values under the unity constraint:
+```{r}
+plot_ly(x = xx, y = yy, z = zz_hat3) %>% add_surface()
+```
+
+
+Let's measure the error:
 
 ```{r}
 # Max relative error
-norm(t(zz_best)-zz_cl,"I")/norm(t(zz_best),"I")
-norm(t(zz_hat)-zz_cl,"I")/norm(t(zz_hat),"I")
-norm(t(zz_hat1)-zz_cl,"I")/norm(t(zz_hat1),"I")
-norm(t(zz_hat2)-zz_cl,"I")/norm(t(zz_hat2),"I")
-norm(t(zz_hat3)-zz_cl,"I")/norm(t(zz_hat3),"I")
+d_f <- data.frame(
+  "Estimator independent" = norm(t(zz_hat)-zz_cl,"I")/norm(t(zz_hat),"I"),
+  "Starting value best" = norm(t(zz_best)-zz_cl,"I")/norm(t(zz_best),"I"),
+  "Estimator best" = norm(t(zz_hat1)-zz_cl,"I")/norm(t(zz_hat1),"I"),
+  "Est best >0" = norm(t(zz_hat2)-zz_cl,"I")/norm(t(zz_hat2),"I"),
+  "Est best [0,1]" = norm(t(zz_hat3)-zz_cl,"I")/norm(t(zz_hat3),"I")
+)
+d_f
 ```
 
 

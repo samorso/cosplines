@@ -1,10 +1,6 @@
 base
-methods
-datasets
-utils
-grDevices
-graphics
-stats
 splines2
 cosplines
 nnls
+ggplot2
+plotly
