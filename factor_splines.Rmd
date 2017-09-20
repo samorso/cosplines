@@ -133,9 +133,11 @@ zz_hat1 <- tcrossprod(P%*%C_hat1,P)
 
 The plot of the true function $h(\cdot)$.
 
-```{r,cache=TRUE}
+```{r,eval=FALSE}
 plot_ly(x = xx, y = yy, z = zz_cl) %>% add_surface()
 ```
+
+<iframe width="600" height="400" frameborder="0" scrolling="no" src="https://plot.ly/~orsosam/1.embed"></iframe>
 
 
 The plot of $\hat{s}(\cdot)$ evaluated at the _oracle_ (best starting values):
