@@ -133,7 +133,7 @@ zz_hat1 <- tcrossprod(P%*%C_hat1,P)
 
 The plot of the true function $h(\cdot)$.
 
-```{r}
+```{r,cache=TRUE}
 plot_ly(x = xx, y = yy, z = zz_cl) %>% add_surface()
 ```
 
