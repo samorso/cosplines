@@ -138,9 +138,7 @@ arma::vec vec_moments(
 }
 
 // Average of estimated moments
-//' @export
-// [[Rcpp::export]]
-arma::vec average_moments(
+arma::vec average_moments_old(
     arma::mat& x,
     arma::vec& q
 ){
@@ -167,6 +165,41 @@ arma::vec average_moments(
 
   return v;
 }
+
+//' @export
+// [[Rcpp::export]]
+arma::vec average_moments(
+    arma::mat& x,
+    arma::vec& q
+){
+  unsigned int n(x.n_rows);
+  unsigned int D(x.n_cols);
+  unsigned int p(q.n_elem);
+  arma::mat y(n,D);
+  p += 1;
+  unsigned int d;
+  d = D - 1;
+  d *= D;
+  d /= 2;
+  arma::vec v(p, arma::fill::zeros);
+  arma::mat m1(n,2);
+
+  // transform to empirical CDFs
+  y = mat_empirical_cdf(x);
+
+  for(unsigned int i(0); i < D-1; ++i){
+    for(unsigned int j = i+1; j < D; ++j){
+      m1.col(0) = y.col(i);
+      m1.col(1) = y.col(j);
+      v += vec_moments(m1,q);
+    }
+  }
+
+  v /= d;
+
+  return v;
+}
+
 
 // -----------------
 // Parametric functions
